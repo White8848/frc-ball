@@ -54,101 +54,35 @@ processCanvas.width = PROCESS_WIDTH;
 processCanvas.height = PROCESS_HEIGHT;
 
 /**
- * 加载 OpenCV.js，依次尝试多个 CDN 源
+ * 加载本地自托管的 OpenCV.js（WASM 内嵌，无需额外网络请求）
  */
 function loadOpenCv() {
-  const OPENCV_SOURCES = [
-    {
-      js: 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/opencv.js',
-      base: 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/'
-    },
-    {
-      js: 'https://docs.opencv.org/4.9.0/opencv.js',
-      base: 'https://docs.opencv.org/4.9.0/'
-    }
-  ];
-
-  let urlIndex = 0;
-
-  function tryNextSource() {
-    if (urlIndex >= OPENCV_SOURCES.length) {
-      loadingText.textContent = '所有源加载失败，请检查网络后刷新重试';
-      return;
-    }
-    const source = OPENCV_SOURCES[urlIndex];
-    urlIndex++;
-    console.log('尝试加载 OpenCV.js:', source.js);
-    loadingText.textContent = '正在加载 OpenCV.js... (源 ' + urlIndex + '/' + OPENCV_SOURCES.length + ')';
-    progressBar.style.width = '0%';
-    progressText.textContent = '';
-
-    loadOpenCvFromSource(source, tryNextSource);
-  }
-
-  tryNextSource();
-}
-
-/**
- * 从指定源加载 OpenCV.js，失败时调用 onFail 回调
- */
-function loadOpenCvFromSource(source, onFail) {
-  // 配置 Module 以解决 WASM 文件路径问题
-  window.Module = window.Module || {};
-  window.Module.locateFile = function(filename) {
-    if (filename.endsWith('.wasm') || filename.endsWith('.data')) {
-      return source.base + filename;
-    }
-    return filename;
-  };
-
   const script = document.createElement('script');
   script.async = true;
-  script.src = source.js;
-
-  // 30 秒超时保护
-  const timeout = setTimeout(() => {
-    console.warn('加载超时:', source.js);
-    script.onload = null;
-    script.onerror = null;
-    try { document.body.removeChild(script); } catch(e) {}
-    delete window.Module.locateFile;
-    onFail();
-  }, 30000);
+  script.src = 'lib/opencv.js';
 
   script.onload = () => {
-    clearTimeout(timeout);
     progressBar.style.width = '100%';
     loadingText.textContent = '正在初始化 OpenCV...';
     progressText.textContent = '';
-    waitForOpenCv(onFail);
+    waitForOpenCv();
   };
   script.onerror = () => {
-    clearTimeout(timeout);
-    console.warn('加载失败:', source.js);
-    try { document.body.removeChild(script); } catch(e) {}
-    delete window.Module.locateFile;
-    onFail();
+    loadingText.textContent = '加载 OpenCV.js 失败，请确认 lib/opencv.js 存在';
   };
   document.body.appendChild(script);
 }
 
 /**
  * 等待 OpenCV.js 运行时初始化完成
- * @param {Function} onFail - 初始化超时时的回调（尝试下一个源）
  */
-function waitForOpenCv(onFail) {
+function waitForOpenCv() {
   const startTime = Date.now();
-  const TIMEOUT = 60000; // 60 秒超时
+  const TIMEOUT = 30000;
 
   const check = () => {
-    // 超时保护
     if (Date.now() - startTime > TIMEOUT) {
-      console.warn('OpenCV.js 初始化超时');
-      if (onFail) {
-        onFail();
-      } else {
-        loadingText.textContent = '初始化超时，请刷新重试';
-      }
+      loadingText.textContent = 'OpenCV 初始化超时，请刷新重试';
       return;
     }
 
@@ -160,8 +94,7 @@ function waitForOpenCv(onFail) {
           onOpenCvReady();
         }).catch((err) => {
           console.error('OpenCV.js 初始化失败:', err);
-          if (onFail) onFail();
-          else loadingText.textContent = '初始化失败，请刷新重试';
+          loadingText.textContent = '初始化失败: ' + err.message;
         });
         return;
       }

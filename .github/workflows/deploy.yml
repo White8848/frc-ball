@@ -26,8 +26,9 @@ jobs:
 
       - name: Prepare deploy files
         run: |
-          mkdir -p _site
+          mkdir -p _site/lib
           cp index.html app.js detector.js tracker.js _site/
+          cp lib/opencv.js _site/lib/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
