@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>黄色球检测计数</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #000;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      touch-action: manipulation;
+    }
+
+    /* 加载界面 */
+    #loading {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #111;
+      color: #fff;
+      z-index: 100;
+    }
+
+    #loading h1 {
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+
+    #loading .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid #333;
+      border-top-color: #ffcc00;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #loading-text {
+      color: #999;
+      font-size: 14px;
+    }
+
+    /* 视频和画布 */
+    #video {
+      display: none;
+    }
+
+    #canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* 顶部栏 */
+    #topbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      padding-top: max(12px, env(safe-area-inset-top));
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 10;
+    }
+
+    #settings-btn {
+      background: rgba(255, 255, 255, 0.15);
+      border: none;
+      color: #fff;
+      font-size: 16px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    #settings-btn.active {
+      background: rgba(255, 204, 0, 0.3);
+    }
+
+    #count-display {
+      color: #ffcc00;
+      font-size: 28px;
+      font-weight: bold;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #fps-display {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 12px;
+      position: fixed;
+      top: max(14px, env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+    }
+
+    /* 底部栏 */
+    #bottombar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      padding: 16px;
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      z-index: 10;
+    }
+
+    #reset-btn {
+      background: rgba(255, 60, 60, 0.6);
+      border: none;
+      color: #fff;
+      font-size: 18px;
+      padding: 12px 40px;
+      border-radius: 12px;
+      cursor: pointer;
+    }
+
+    #reset-btn:active {
+      background: rgba(255, 60, 60, 0.9);
+    }
+
+    /* 设置面板 */
+    #settings-panel {
+      position: fixed;
+      top: 60px;
+      top: calc(max(12px, env(safe-area-inset-top)) + 50px);
+      left: 0;
+      right: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 16px;
+      z-index: 10;
+      display: none;
+    }
+
+    #settings-panel.show {
+      display: block;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    .setting-row label {
+      flex-shrink: 0;
+      width: 90px;
+    }
+
+    .setting-row input[type="range"] {
+      flex: 1;
+      margin: 0 12px;
+      accent-color: #ffcc00;
+    }
+
+    .setting-row .value {
+      width: 30px;
+      text-align: right;
+      color: #ffcc00;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .setting-row-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 48px;
+      height: 28px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: #444;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle-slider::before {
+      content: "";
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      left: 3px;
+      top: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+      background: #ffcc00;
+    }
+
+    .toggle-switch input:checked + .toggle-slider::before {
+      transform: translateX(20px);
+    }
+
+    /* 最小球大小选择 */
+    .size-buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    .size-btn {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .size-btn.active {
+      background: rgba(255, 204, 0, 0.3);
+      border-color: #ffcc00;
+      color: #ffcc00;
+    }
+  </style>
+</head>
+<body>
+  <!-- 加载界面 -->
+  <div id="loading">
+    <h1>黄色球检测</h1>
+    <div class="spinner"></div>
+    <div id="loading-text">正在加载 OpenCV.js...</div>
+  </div>
+
+  <!-- 隐藏的 video 元素 -->
+  <video id="video" playsinline autoplay muted></video>
+
+  <!-- 显示画布 -->
+  <canvas id="canvas"></canvas>
+
+  <!-- FPS 显示 -->
+  <div id="fps-display">-- FPS</div>
+
+  <!-- 顶部栏 -->
+  <div id="topbar">
+    <button id="settings-btn">设置</button>
+    <div id="count-display">计数: 0</div>
+  </div>
+
+  <!-- 设置面板 -->
+  <div id="settings-panel">
+    <div class="setting-row">
+      <label>颜色灵敏度</label>
+      <input type="range" id="sensitivity" min="1" max="10" value="5">
+      <span class="value" id="sensitivity-val">5</span>
+    </div>
+    <div class="setting-row">
+      <label>最小球大小</label>
+      <div class="size-buttons">
+        <button class="size-btn" data-size="small">小</button>
+        <button class="size-btn active" data-size="medium">中</button>
+        <button class="size-btn" data-size="large">大</button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label>计数线位置</label>
+      <input type="range" id="countline" min="20" max="90" value="70">
+      <span class="value" id="countline-val">70%</span>
+    </div>
+    <div class="setting-row-toggle">
+      <label>显示调试</label>
+      <div class="toggle-switch">
+        <input type="checkbox" id="debug-toggle">
+        <span class="toggle-slider"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部栏 -->
+  <div id="bottombar">
+    <button id="reset-btn">重置</button>
+  </div>
+
+  <!-- 脚本加载 -->
+  <script src="detector.js"></script>
+  <script src="tracker.js"></script>
+  <script async src="https://docs.opencv.org/4.9.0/opencv.js" onload="onOpenCvReady();" id="opencv-script"></script>
+  <script src="app.js"></script>
+</body>
+</html>
