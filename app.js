@@ -37,6 +37,8 @@ const sensitivityVal = document.getElementById('sensitivity-val');
 const countlineSlider = document.getElementById('countline');
 const countlineVal = document.getElementById('countline-val');
 const debugToggle = document.getElementById('debug-toggle');
+const landscapeToggle = document.getElementById('landscape-toggle');
+const wideAngleToggle = document.getElementById('wide-angle-toggle');
 const sizeButtons = document.querySelectorAll('.size-btn');
 const dirButtons = document.querySelectorAll('.dir-btn');
 
@@ -55,8 +57,19 @@ processCanvas.height = PROCESS_HEIGHT;
 
 /**
  * 加载本地自托管的 OpenCV.js（WASM 内嵌，无需额外网络请求）
+ *
+ * 此版本 opencv.js 使用 UMD 包装，内部会立即调用 cv(Module) 启动 WASM 初始化。
+ * 因此必须在脚本加载前配置 Module.onRuntimeInitialized 回调。
  */
 function loadOpenCv() {
+  // 在脚本加载前设置 Module，确保 onRuntimeInitialized 能被捕获
+  window.Module = {
+    onRuntimeInitialized: function() {
+      console.log('OpenCV.js WASM 初始化完成');
+      onOpenCvReady();
+    }
+  };
+
   const script = document.createElement('script');
   script.async = true;
   script.src = 'lib/opencv.js';
@@ -65,7 +78,11 @@ function loadOpenCv() {
     progressBar.style.width = '100%';
     loadingText.textContent = '正在初始化 OpenCV...';
     progressText.textContent = '';
-    waitForOpenCv();
+    // 如果 onRuntimeInitialized 已经在脚本执行期间同步触发，
+    // cvReady 已经为 true，无需额外处理。
+    // 否则等待异步回调。
+    // 额外兜底：轮询检查 cv.Mat 是否可用
+    waitForCvReady();
   };
   script.onerror = () => {
     loadingText.textContent = '加载 OpenCV.js 失败，请确认 lib/opencv.js 存在';
@@ -74,49 +91,34 @@ function loadOpenCv() {
 }
 
 /**
- * 等待 OpenCV.js 运行时初始化完成
+ * 兜底轮询：如果 onRuntimeInitialized 未触发，通过检查 cv.Mat 判断就绪
  */
-function waitForOpenCv() {
+function waitForCvReady() {
+  if (cvReady) return; // 已通过 onRuntimeInitialized 就绪
+
   const startTime = Date.now();
   const TIMEOUT = 30000;
 
   const check = () => {
+    if (cvReady) return;
     if (Date.now() - startTime > TIMEOUT) {
       loadingText.textContent = 'OpenCV 初始化超时，请刷新重试';
       return;
     }
-
-    if (typeof cv !== 'undefined') {
-      // OpenCV.js 4.x 工厂模式：cv 是一个函数，调用后返回 Promise
-      if (typeof cv === 'function') {
-        cv().then((instance) => {
-          window.cv = instance;
-          onOpenCvReady();
-        }).catch((err) => {
-          console.error('OpenCV.js 初始化失败:', err);
-          loadingText.textContent = '初始化失败: ' + err.message;
-        });
-        return;
-      }
-      // 旧模式：cv 直接是对象
-      if (cv.Mat) {
-        onOpenCvReady();
-      } else if (cv.onRuntimeInitialized !== undefined) {
-        cv.onRuntimeInitialized = onOpenCvReady;
-      } else {
-        setTimeout(check, 100);
-      }
+    if (typeof cv !== 'undefined' && cv.Mat) {
+      onOpenCvReady();
     } else {
-      setTimeout(check, 100);
+      setTimeout(check, 200);
     }
   };
-  check();
+  setTimeout(check, 200);
 }
 
 /**
  * OpenCV.js 初始化完成
  */
 function onOpenCvReady() {
+  if (cvReady) return; // 防止重复调用
   cvReady = true;
   loadingText.textContent = '正在启动摄像头...';
   progressBar.style.width = '100%';
@@ -125,22 +127,64 @@ function onOpenCvReady() {
 
 /**
  * 启动摄像头
+ * @param {boolean} wideAngle - 是否请求广角镜头
  */
-async function startCamera() {
+async function startCamera(wideAngle) {
+  // 停止已有的摄像头流
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+    cameraReady = false;
+  }
+
+  const constraints = {
+    video: {
+      facingMode: 'environment',
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      frameRate: { ideal: 60, min: 30 },
+    },
+    audio: false,
+  };
+
+  if (wideAngle) {
+    // 尝试请求超广角镜头：优先 0.5x zoom，否则请求最宽 FOV
+    constraints.video.zoom = { ideal: 0.5 };
+    constraints.video.width = { ideal: 1280 };
+    constraints.video.height = { ideal: 720 };
+  }
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        frameRate: { ideal: 60, min: 30 },
-      },
-      audio: false,
-    });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      if (wideAngle) {
+        // zoom 约束可能不被支持，回退去掉 zoom
+        console.warn('广角约束不支持，尝试回退:', e.message);
+        delete constraints.video.zoom;
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } else {
+        throw e;
+      }
+    }
 
     video.srcObject = stream;
     await video.play();
     cameraReady = true;
+
+    // 尝试通过 track 设置 zoom（某些设备支持）
+    if (wideAngle) {
+      try {
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities();
+        if (caps.zoom && caps.zoom.min < 1) {
+          await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] });
+        }
+      } catch (e) {
+        console.warn('无法设置 zoom:', e.message);
+      }
+    }
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -367,10 +411,31 @@ dirButtons.forEach(btn => {
   });
 });
 
+// 横屏模式
+landscapeToggle.addEventListener('change', () => {
+  if (landscapeToggle.checked) {
+    // 尝试锁定横屏
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(e => {
+        console.warn('无法锁定横屏:', e.message);
+      });
+    }
+  } else {
+    if (screen.orientation && screen.orientation.unlock) {
+      screen.orientation.unlock();
+    }
+  }
+});
+
+// 广角镜头模式
+wideAngleToggle.addEventListener('change', () => {
+  startCamera(wideAngleToggle.checked);
+});
+
 // 页面加载完成后启动
 document.addEventListener('DOMContentLoaded', () => {
   loadOpenCv();
-  startCamera();
+  startCamera(false);
 });
 
 // 页面可见性变化
