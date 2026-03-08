@@ -6,39 +6,43 @@
 class BallTracker {
   /**
    * @param {Object} options
-   * @param {number} options.countLineY - 计数线 Y 坐标比例 (0-1)，默认 0.7
-   * @param {number} options.maxDistance - 最大匹配距离（像素），默认自动计算
+   * @param {number} options.countLineRatio - 计数线位置比例 (0-1)，默认 0.7
+   * @param {string} options.direction - 球进入方向: 'top-down'|'bottom-up'|'left-right'|'right-left'
    * @param {number} options.maxMissedFrames - 最大丢失帧数后移除，默认 15
    * @param {number} options.minFramesToCount - 最少连续出现帧数才计数，默认 2
    */
   constructor(options = {}) {
-    this.countLineRatio = options.countLineY || 0.7;
-    this.maxDistanceRatio = 0.15; // 画面宽度的 15%
+    this.countLineRatio = options.countLineRatio || 0.7;
+    this.direction = options.direction || 'top-down';
+    this.maxDistanceRatio = 0.15;
     this.maxMissedFrames = options.maxMissedFrames || 15;
     this.minFramesToCount = options.minFramesToCount || 2;
 
-    this.trackedBalls = []; // 活跃跟踪列表
+    this.trackedBalls = [];
     this.nextId = 1;
     this.frameCount = 0;
     this.totalCount = 0;
   }
 
   /**
+   * 计数线是否为水平线（上下方向用水平线，左右方向用垂直线）
+   */
+  isHorizontal() {
+    return this.direction === 'top-down' || this.direction === 'bottom-up';
+  }
+
+  /**
    * 更新跟踪状态
-   * @param {Array<{centerX: number, centerY: number, area: number, x: number, y: number, width: number, height: number}>} detectedBalls
-   * @param {number} frameWidth - 当前帧宽度（用于计算距离阈值）
-   * @param {number} frameHeight - 当前帧高度（用于计算计数线位置）
-   * @returns {{tracked: Array, count: number}}
    */
   update(detectedBalls, frameWidth, frameHeight) {
     this.frameCount++;
-    const maxDistance = frameWidth * this.maxDistanceRatio;
-    const countLineY = frameHeight * this.countLineRatio;
+    const maxDistance = Math.max(frameWidth, frameHeight) * this.maxDistanceRatio;
+    const linePos = this.isHorizontal()
+      ? frameHeight * this.countLineRatio
+      : frameWidth * this.countLineRatio;
 
-    // 标记哪些检测结果已匹配
     const matched = new Array(detectedBalls.length).fill(false);
 
-    // 对每个已跟踪球体尝试匹配
     for (const tracked of this.trackedBalls) {
       let bestIdx = -1;
       let bestDist = maxDistance;
@@ -56,8 +60,8 @@ class BallTracker {
       }
 
       if (bestIdx >= 0) {
-        // 匹配成功，更新位置
         const det = detectedBalls[bestIdx];
+        tracked.prevCenterX = tracked.centerX;
         tracked.prevCenterY = tracked.centerY;
         tracked.centerX = det.centerX;
         tracked.centerY = det.centerY;
@@ -70,18 +74,17 @@ class BallTracker {
         tracked.seenCount++;
         matched[bestIdx] = true;
 
-        // 检查是否穿越计数线（从上到下）
-        if (!tracked.counted &&
-            tracked.seenCount >= this.minFramesToCount &&
-            tracked.prevCenterY < countLineY &&
-            tracked.centerY >= countLineY) {
-          tracked.counted = true;
-          this.totalCount++;
+        // 检查是否穿越计数线
+        if (!tracked.counted && tracked.seenCount >= this.minFramesToCount) {
+          if (this._crossedLine(tracked, linePos)) {
+            tracked.counted = true;
+            this.totalCount++;
+          }
         }
       }
     }
 
-    // 为未匹配的检测结果创建新跟踪
+    // 新检测结果
     for (let i = 0; i < detectedBalls.length; i++) {
       if (matched[i]) continue;
       const det = detectedBalls[i];
@@ -89,6 +92,7 @@ class BallTracker {
         id: this.nextId++,
         centerX: det.centerX,
         centerY: det.centerY,
+        prevCenterX: det.centerX,
         prevCenterY: det.centerY,
         x: det.x,
         y: det.y,
@@ -101,7 +105,6 @@ class BallTracker {
       });
     }
 
-    // 清除过期的跟踪
     this.trackedBalls = this.trackedBalls.filter(
       t => (this.frameCount - t.lastSeen) < this.maxMissedFrames
     );
@@ -113,8 +116,23 @@ class BallTracker {
   }
 
   /**
-   * 重置所有状态
+   * 检查球是否穿越计数线
    */
+  _crossedLine(tracked, linePos) {
+    switch (this.direction) {
+      case 'top-down':
+        return tracked.prevCenterY < linePos && tracked.centerY >= linePos;
+      case 'bottom-up':
+        return tracked.prevCenterY > linePos && tracked.centerY <= linePos;
+      case 'left-right':
+        return tracked.prevCenterX < linePos && tracked.centerX >= linePos;
+      case 'right-left':
+        return tracked.prevCenterX > linePos && tracked.centerX <= linePos;
+      default:
+        return false;
+    }
+  }
+
   reset() {
     this.trackedBalls = [];
     this.nextId = 1;
@@ -122,11 +140,11 @@ class BallTracker {
     this.totalCount = 0;
   }
 
-  /**
-   * 设置计数线位置
-   * @param {number} ratio - 0-1 之间的比例
-   */
   setCountLineRatio(ratio) {
     this.countLineRatio = Math.max(0.1, Math.min(0.9, ratio));
+  }
+
+  setDirection(direction) {
+    this.direction = direction;
   }
 }
