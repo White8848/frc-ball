@@ -55,8 +55,19 @@ processCanvas.height = PROCESS_HEIGHT;
 
 /**
  * 加载本地自托管的 OpenCV.js（WASM 内嵌，无需额外网络请求）
+ *
+ * 此版本 opencv.js 使用 UMD 包装，内部会立即调用 cv(Module) 启动 WASM 初始化。
+ * 因此必须在脚本加载前配置 Module.onRuntimeInitialized 回调。
  */
 function loadOpenCv() {
+  // 在脚本加载前设置 Module，确保 onRuntimeInitialized 能被捕获
+  window.Module = {
+    onRuntimeInitialized: function() {
+      console.log('OpenCV.js WASM 初始化完成');
+      onOpenCvReady();
+    }
+  };
+
   const script = document.createElement('script');
   script.async = true;
   script.src = 'lib/opencv.js';
@@ -65,7 +76,11 @@ function loadOpenCv() {
     progressBar.style.width = '100%';
     loadingText.textContent = '正在初始化 OpenCV...';
     progressText.textContent = '';
-    waitForOpenCv();
+    // 如果 onRuntimeInitialized 已经在脚本执行期间同步触发，
+    // cvReady 已经为 true，无需额外处理。
+    // 否则等待异步回调。
+    // 额外兜底：轮询检查 cv.Mat 是否可用
+    waitForCvReady();
   };
   script.onerror = () => {
     loadingText.textContent = '加载 OpenCV.js 失败，请确认 lib/opencv.js 存在';
@@ -74,49 +89,34 @@ function loadOpenCv() {
 }
 
 /**
- * 等待 OpenCV.js 运行时初始化完成
+ * 兜底轮询：如果 onRuntimeInitialized 未触发，通过检查 cv.Mat 判断就绪
  */
-function waitForOpenCv() {
+function waitForCvReady() {
+  if (cvReady) return; // 已通过 onRuntimeInitialized 就绪
+
   const startTime = Date.now();
   const TIMEOUT = 30000;
 
   const check = () => {
+    if (cvReady) return;
     if (Date.now() - startTime > TIMEOUT) {
       loadingText.textContent = 'OpenCV 初始化超时，请刷新重试';
       return;
     }
-
-    if (typeof cv !== 'undefined') {
-      // OpenCV.js 4.x 工厂模式：cv 是一个函数，调用后返回 Promise
-      if (typeof cv === 'function') {
-        cv().then((instance) => {
-          window.cv = instance;
-          onOpenCvReady();
-        }).catch((err) => {
-          console.error('OpenCV.js 初始化失败:', err);
-          loadingText.textContent = '初始化失败: ' + err.message;
-        });
-        return;
-      }
-      // 旧模式：cv 直接是对象
-      if (cv.Mat) {
-        onOpenCvReady();
-      } else if (cv.onRuntimeInitialized !== undefined) {
-        cv.onRuntimeInitialized = onOpenCvReady;
-      } else {
-        setTimeout(check, 100);
-      }
+    if (typeof cv !== 'undefined' && cv.Mat) {
+      onOpenCvReady();
     } else {
-      setTimeout(check, 100);
+      setTimeout(check, 200);
     }
   };
-  check();
+  setTimeout(check, 200);
 }
 
 /**
  * OpenCV.js 初始化完成
  */
 function onOpenCvReady() {
+  if (cvReady) return; // 防止重复调用
   cvReady = true;
   loadingText.textContent = '正在启动摄像头...';
   progressBar.style.width = '100%';
