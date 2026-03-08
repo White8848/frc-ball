@@ -8,16 +8,17 @@
 ## 技术栈
 
 - 纯前端：HTML / CSS / JavaScript（无需后端）
-- OpenCV.js（WASM，通过 CDN 加载，约 8MB）用于高性能图像处理
+- OpenCV.js（WASM，本地自托管 `lib/opencv.js`，约 10MB，WASM 内嵌单文件）用于高性能图像处理
 - GitHub Pages 部署（自带 HTTPS）
 
 ## 文件结构
 
 - `index.html` - 主页面（HTML + 内联 CSS），中文界面
-- `app.js` - 主应用逻辑（摄像头、UI、主循环、OpenCV XHR 加载进度）
+- `app.js` - 主应用逻辑（摄像头、UI、主循环、OpenCV 加载与初始化）
 - `detector.js` - 黄色球检测算法（HSV 过滤 + 连通域分析）
 - `tracker.js` - 球体跟踪与穿越计数线计数，支持 4 方向
-- `.github/workflows/deploy.yml` - GitHub Actions 部署到 GitHub Pages
+- `lib/opencv.js` - 自托管 OpenCV.js（@techstark/opencv-js@4.10.0，WASM 内嵌）
+- `.github/workflows/deploy.yml` - GitHub Actions 部署到 GitHub Pages（含 lib/ 目录）
 
 ## 核心算法
 
@@ -35,7 +36,8 @@
 - 颜色灵敏度滑块（1-10），内部映射 HSV 范围
 - 最小球大小选择（小/中/大）
 - 调试掩码显示开关
-- OpenCV.js 加载进度条（百分比 + MB）
+- 横屏模式（通过 screen.orientation.lock 锁定横屏方向）
+- 广角镜头模式（请求最小 zoom / 超广角摄像头）
 - FPS 实时显示
 
 ## 本地开发
