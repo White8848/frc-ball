@@ -54,89 +54,53 @@ processCanvas.width = PROCESS_WIDTH;
 processCanvas.height = PROCESS_HEIGHT;
 
 /**
- * 加载 OpenCV.js，使用 fetch + ReadableStream 显示下载进度
- * 如果浏览器不支持 ReadableStream，回退到普通 script 标签加载
+ * 加载 OpenCV.js，依次尝试多个 CDN 源
  */
 function loadOpenCv() {
-  const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
+  const OPENCV_URLS = [
+    'https://cdn.jsdelivr.net/npm/opencv.js@1.2.1/opencv.js',
+    'https://unpkg.com/opencv.js@1.2.1/opencv.js',
+    'https://docs.opencv.org/4.9.0/opencv.js'
+  ];
 
-  // 检查是否支持 ReadableStream（用于显示进度）
-  if (typeof ReadableStream === 'undefined' || typeof Response === 'undefined') {
-    loadOpenCvFallback(OPENCV_URL);
-    return;
+  let urlIndex = 0;
+
+  function tryNextUrl() {
+    if (urlIndex >= OPENCV_URLS.length) {
+      loadingText.textContent = '所有源加载失败，请检查网络后刷新重试';
+      return;
+    }
+    const url = OPENCV_URLS[urlIndex];
+    urlIndex++;
+    console.log('尝试加载 OpenCV.js:', url);
+    loadingText.textContent = '正在加载 OpenCV.js... (源 ' + urlIndex + '/' + OPENCV_URLS.length + ')';
+    progressBar.style.width = '0%';
+    progressText.textContent = '';
+
+    loadOpenCvFromUrl(url, tryNextUrl);
   }
 
-  fetch(OPENCV_URL)
-    .then(response => {
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-
-      const contentLength = response.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : 0;
-
-      // 无法获取大小或不支持 body stream，回退
-      if (!total || !response.body) {
-        loadingText.textContent = '正在加载 OpenCV.js...';
-        return response.text();
-      }
-
-      let loaded = 0;
-      const reader = response.body.getReader();
-      const chunks = [];
-
-      function pump() {
-        return reader.read().then(({ done, value }) => {
-          if (done) return;
-          chunks.push(value);
-          loaded += value.length;
-          const pct = Math.round((loaded / total) * 100);
-          const loadedMB = (loaded / 1024 / 1024).toFixed(1);
-          const totalMB = (total / 1024 / 1024).toFixed(1);
-          progressBar.style.width = pct + '%';
-          progressText.textContent = loadedMB + ' / ' + totalMB + ' MB';
-          loadingText.textContent = '正在加载 OpenCV.js... ' + pct + '%';
-          return pump();
-        });
-      }
-
-      return pump().then(() => {
-        const blob = new Blob(chunks);
-        return blob.text();
-      });
-    })
-    .then(scriptText => {
-      if (!scriptText) return;
-      progressBar.style.width = '100%';
-      loadingText.textContent = '正在初始化 OpenCV...';
-      progressText.textContent = '';
-
-      const script = document.createElement('script');
-      script.textContent = scriptText;
-      document.body.appendChild(script);
-      waitForOpenCv();
-    })
-    .catch(err => {
-      console.error('Fetch OpenCV failed:', err);
-      // fetch 失败时回退到 script 标签
-      loadOpenCvFallback(OPENCV_URL);
-    });
+  tryNextUrl();
 }
 
 /**
- * 回退方案：用 script 标签加载（无进度显示）
+ * 从指定 URL 加载 OpenCV.js，失败时调用 onFail 回调
  */
-function loadOpenCvFallback(url) {
-  loadingText.textContent = '正在加载 OpenCV.js...';
-  progressText.textContent = '';
+function loadOpenCvFromUrl(url, onFail) {
+  // 优先用 script 标签加载（兼容性最好，无 CORS 问题）
   const script = document.createElement('script');
   script.async = true;
   script.src = url;
   script.onload = () => {
     progressBar.style.width = '100%';
     loadingText.textContent = '正在初始化 OpenCV...';
+    progressText.textContent = '';
     waitForOpenCv();
   };
   script.onerror = () => {
-    loadingText.textContent = '加载失败，请刷新重试';
+    console.warn('加载失败:', url);
+    document.body.removeChild(script);
+    onFail();
   };
   document.body.appendChild(script);
 }
