@@ -108,6 +108,15 @@ function loadOpenCv() {
 function waitForOpenCv() {
   const check = () => {
     if (typeof cv !== 'undefined') {
+      // OpenCV.js 4.x 工厂模式：cv 是一个函数，调用后返回 Promise
+      if (typeof cv === 'function') {
+        cv().then((instance) => {
+          window.cv = instance;
+          onOpenCvReady();
+        });
+        return;
+      }
+      // 旧模式：cv 直接是对象
       if (cv.Mat) {
         onOpenCvReady();
       } else if (cv.onRuntimeInitialized !== undefined) {
