@@ -17,6 +17,7 @@ let currentParams = {
 };
 let showDebug = false;
 let countLineRatio = 0.7;
+let currentDirection = 'top-down';
 
 // DOM 元素
 const video = document.getElementById('video');
@@ -24,6 +25,8 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const loadingDiv = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
+const progressBar = document.getElementById('progress-bar');
+const progressText = document.getElementById('progress-text');
 const countDisplay = document.getElementById('count-display');
 const fpsDisplay = document.getElementById('fps-display');
 const settingsBtn = document.getElementById('settings-btn');
@@ -35,6 +38,7 @@ const countlineSlider = document.getElementById('countline');
 const countlineVal = document.getElementById('countline-val');
 const debugToggle = document.getElementById('debug-toggle');
 const sizeButtons = document.querySelectorAll('.size-btn');
+const dirButtons = document.querySelectorAll('.dir-btn');
 
 // FPS 计算
 let frameCount = 0;
@@ -50,44 +54,82 @@ processCanvas.width = PROCESS_WIDTH;
 processCanvas.height = PROCESS_HEIGHT;
 
 /**
- * OpenCV.js 加载完成回调
+ * 使用 XHR 加载 OpenCV.js 并显示下载进度
  */
-function onOpenCvReady() {
-  // OpenCV.js 可能需要一点时间初始化
-  if (typeof cv !== 'undefined' && cv.Mat) {
-    cvReady = true;
-    loadingText.textContent = '正在启动摄像头...';
-    tryStart();
-  } else {
-    // 等待 cv 模块初始化
-    const checkCv = () => {
-      if (typeof cv !== 'undefined') {
-        if (cv.Mat) {
-          cvReady = true;
-          loadingText.textContent = '正在启动摄像头...';
-          tryStart();
-        } else if (cv.onRuntimeInitialized !== undefined) {
-          cv.onRuntimeInitialized = () => {
-            cvReady = true;
-            loadingText.textContent = '正在启动摄像头...';
-            tryStart();
-          };
-        }
-      } else {
-        setTimeout(checkCv, 100);
-      }
-    };
-    checkCv();
-  }
+function loadOpenCv() {
+  const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('GET', OPENCV_URL, true);
+  xhr.responseType = 'text';
+
+  xhr.onprogress = (event) => {
+    if (event.lengthComputable) {
+      const pct = Math.round((event.loaded / event.total) * 100);
+      const loadedMB = (event.loaded / 1024 / 1024).toFixed(1);
+      const totalMB = (event.total / 1024 / 1024).toFixed(1);
+      progressBar.style.width = pct + '%';
+      progressText.textContent = loadedMB + ' / ' + totalMB + ' MB';
+      loadingText.textContent = '正在加载 OpenCV.js... ' + pct + '%';
+    } else {
+      const loadedMB = (event.loaded / 1024 / 1024).toFixed(1);
+      progressText.textContent = loadedMB + ' MB';
+    }
+  };
+
+  xhr.onload = () => {
+    if (xhr.status === 200) {
+      progressBar.style.width = '100%';
+      loadingText.textContent = '正在初始化 OpenCV...';
+      progressText.textContent = '';
+
+      // 执行 OpenCV.js 脚本
+      const script = document.createElement('script');
+      script.textContent = xhr.responseText;
+      document.body.appendChild(script);
+
+      // 等待 OpenCV 运行时初始化
+      waitForOpenCv();
+    } else {
+      loadingText.textContent = '加载失败，请刷新重试';
+    }
+  };
+
+  xhr.onerror = () => {
+    loadingText.textContent = '网络错误，请刷新重试';
+  };
+
+  xhr.send();
 }
 
-// 如果 opencv.js 用 Module 模式加载
-if (typeof Module !== 'undefined') {
-  Module.onRuntimeInitialized = () => {
-    cvReady = true;
-    loadingText.textContent = '正在启动摄像头...';
-    tryStart();
+/**
+ * 等待 OpenCV.js 运行时初始化完成
+ */
+function waitForOpenCv() {
+  const check = () => {
+    if (typeof cv !== 'undefined') {
+      if (cv.Mat) {
+        onOpenCvReady();
+      } else if (cv.onRuntimeInitialized !== undefined) {
+        cv.onRuntimeInitialized = onOpenCvReady;
+      } else {
+        setTimeout(check, 50);
+      }
+    } else {
+      setTimeout(check, 50);
+    }
   };
+  check();
+}
+
+/**
+ * OpenCV.js 初始化完成
+ */
+function onOpenCvReady() {
+  cvReady = true;
+  loadingText.textContent = '正在启动摄像头...';
+  progressBar.style.width = '100%';
+  tryStart();
 }
 
 /**
@@ -109,7 +151,6 @@ async function startCamera() {
     await video.play();
     cameraReady = true;
 
-    // 设置 canvas 尺寸匹配视频
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
@@ -126,7 +167,10 @@ async function startCamera() {
 function tryStart() {
   if (cvReady && cameraReady && !isRunning) {
     isRunning = true;
-    tracker = new BallTracker({ countLineY: countLineRatio });
+    tracker = new BallTracker({
+      countLineRatio: countLineRatio,
+      direction: currentDirection,
+    });
     loadingDiv.style.display = 'none';
     requestAnimationFrame(processFrame);
   }
@@ -145,27 +189,21 @@ function processFrame(timestamp) {
   processCtx.drawImage(video, 0, 0, PROCESS_WIDTH, PROCESS_HEIGHT);
   const imageData = processCtx.getImageData(0, 0, PROCESS_WIDTH, PROCESS_HEIGHT);
 
-  // 创建 OpenCV Mat
   const src = cv.matFromImageData(imageData);
-
-  // 检测黄色球
   const balls = detectYellowBalls(src, currentParams);
 
-  // 调试掩码显示
   if (showDebug) {
     const mask = getDebugMask(src, currentParams);
-    // 将掩码叠加到画面上
     drawDebugMask(mask);
     mask.delete();
   }
 
   src.delete();
 
-  // 跟踪与计数
+  // 缩放回原始分辨率
   const scaleX = canvas.width / PROCESS_WIDTH;
   const scaleY = canvas.height / PROCESS_HEIGHT;
 
-  // 将检测结果缩放回原始分辨率
   const scaledBalls = balls.map(b => ({
     ...b,
     centerX: b.centerX * scaleX,
@@ -177,14 +215,10 @@ function processFrame(timestamp) {
   }));
 
   const result = tracker.update(scaledBalls, canvas.width, canvas.height);
-
-  // 绘制可视化
   drawOverlay(result.tracked, canvas.width, canvas.height);
-
-  // 更新计数
   countDisplay.textContent = '计数: ' + result.count;
 
-  // 更新 FPS
+  // FPS
   frameCount++;
   const now = performance.now();
   if (now - lastFpsTime >= 1000) {
@@ -201,7 +235,6 @@ function processFrame(timestamp) {
  * 绘制调试掩码叠加
  */
 function drawDebugMask(mask) {
-  // 创建一个与画布相同大小的临时 canvas
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = PROCESS_WIDTH;
   tempCanvas.height = PROCESS_HEIGHT;
@@ -211,18 +244,15 @@ function drawDebugMask(mask) {
   const data = imgData.data;
 
   for (let i = 0; i < mask.rows * mask.cols; i++) {
-    const val = mask.data[i];
-    if (val > 0) {
-      data[i * 4] = 255;     // R
-      data[i * 4 + 1] = 204; // G
-      data[i * 4 + 2] = 0;   // B
-      data[i * 4 + 3] = 100; // A (半透明)
+    if (mask.data[i] > 0) {
+      data[i * 4] = 255;
+      data[i * 4 + 1] = 204;
+      data[i * 4 + 2] = 0;
+      data[i * 4 + 3] = 100;
     }
   }
 
   tempCtx.putImageData(imgData, 0, 0);
-
-  // 绘制到主 canvas（放大）
   ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
 }
 
@@ -230,39 +260,62 @@ function drawDebugMask(mask) {
  * 绘制检测叠加层（检测框、计数线）
  */
 function drawOverlay(trackedBalls, width, height) {
-  const countLineY = height * countLineRatio;
+  const isHoriz = (currentDirection === 'top-down' || currentDirection === 'bottom-up');
+  const linePos = isHoriz
+    ? height * countLineRatio
+    : width * countLineRatio;
 
   // 绘制计数线
   ctx.beginPath();
   ctx.setLineDash([10, 8]);
   ctx.strokeStyle = 'rgba(0, 255, 255, 0.6)';
   ctx.lineWidth = 2;
-  ctx.moveTo(0, countLineY);
-  ctx.lineTo(width, countLineY);
+
+  if (isHoriz) {
+    ctx.moveTo(0, linePos);
+    ctx.lineTo(width, linePos);
+  } else {
+    ctx.moveTo(linePos, 0);
+    ctx.lineTo(linePos, height);
+  }
   ctx.stroke();
   ctx.setLineDash([]);
 
   // 计数线标签
   ctx.fillStyle = 'rgba(0, 255, 255, 0.6)';
   ctx.font = '12px sans-serif';
-  ctx.fillText('计数线', 8, countLineY - 6);
+  if (isHoriz) {
+    ctx.fillText('计数线', 8, linePos - 6);
+  } else {
+    ctx.save();
+    ctx.translate(linePos + 14, 20);
+    ctx.fillText('计数线', 0, 0);
+    ctx.restore();
+  }
+
+  // 绘制方向箭头指示
+  ctx.fillStyle = 'rgba(0, 255, 255, 0.3)';
+  ctx.font = '24px sans-serif';
+  const arrowMap = { 'top-down': '↓', 'bottom-up': '↑', 'left-right': '→', 'right-left': '←' };
+  if (isHoriz) {
+    ctx.fillText(arrowMap[currentDirection], width / 2 - 8, linePos - 12);
+  } else {
+    ctx.fillText(arrowMap[currentDirection], linePos + 8, height / 2);
+  }
 
   // 绘制每个跟踪球体
   for (const ball of trackedBalls) {
     const color = ball.counted ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.8)';
 
-    // 边界框
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.strokeRect(ball.x, ball.y, ball.width, ball.height);
 
-    // 中心点
     ctx.beginPath();
     ctx.arc(ball.centerX, ball.centerY, 4, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
 
-    // ID 标签
     ctx.fillStyle = color;
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText('#' + ball.id, ball.x, ball.y - 6);
@@ -271,13 +324,11 @@ function drawOverlay(trackedBalls, width, height) {
 
 // === UI 事件绑定 ===
 
-// 设置按钮
 settingsBtn.addEventListener('click', () => {
   settingsPanel.classList.toggle('show');
   settingsBtn.classList.toggle('active');
 });
 
-// 重置按钮
 resetBtn.addEventListener('click', () => {
   if (tracker) {
     tracker.reset();
@@ -285,7 +336,6 @@ resetBtn.addEventListener('click', () => {
   }
 });
 
-// 颜色灵敏度滑块
 sensitivitySlider.addEventListener('input', () => {
   const val = parseInt(sensitivitySlider.value);
   sensitivityVal.textContent = val;
@@ -293,7 +343,6 @@ sensitivitySlider.addEventListener('input', () => {
   currentParams = { ...currentParams, ...hsvParams };
 });
 
-// 计数线位置滑块
 countlineSlider.addEventListener('input', () => {
   const val = parseInt(countlineSlider.value);
   countlineVal.textContent = val + '%';
@@ -303,27 +352,37 @@ countlineSlider.addEventListener('input', () => {
   }
 });
 
-// 调试开关
 debugToggle.addEventListener('change', () => {
   showDebug = debugToggle.checked;
 });
 
-// 最小球大小按钮
 sizeButtons.forEach(btn => {
   btn.addEventListener('click', () => {
     sizeButtons.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    const size = btn.dataset.size;
-    currentParams.minAreaRatio = sizeToMinArea(size);
+    currentParams.minAreaRatio = sizeToMinArea(btn.dataset.size);
   });
 });
 
-// 页面加载完成后启动摄像头
+// 方向按钮
+dirButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    dirButtons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentDirection = btn.dataset.dir;
+    if (tracker) {
+      tracker.setDirection(currentDirection);
+    }
+  });
+});
+
+// 页面加载完成后启动
 document.addEventListener('DOMContentLoaded', () => {
+  loadOpenCv();
   startCamera();
 });
 
-// 处理页面可见性变化（节省电量）
+// 页面可见性变化
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     isRunning = false;

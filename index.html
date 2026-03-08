@@ -55,6 +55,29 @@
       font-size: 14px;
     }
 
+    #progress-bar-container {
+      width: 200px;
+      height: 6px;
+      background: #333;
+      border-radius: 3px;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background: #ffcc00;
+      border-radius: 3px;
+      transition: width 0.2s;
+    }
+
+    #progress-text {
+      color: #666;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+
     /* 视频和画布 */
     #video {
       display: none;
@@ -263,6 +286,28 @@
       border-color: #ffcc00;
       color: #ffcc00;
     }
+
+    /* 方向按钮 */
+    .dir-buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dir-btn {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    .dir-btn.active {
+      background: rgba(255, 204, 0, 0.3);
+      border-color: #ffcc00;
+      color: #ffcc00;
+    }
   </style>
 </head>
 <body>
@@ -271,6 +316,10 @@
     <h1>黄色球检测</h1>
     <div class="spinner"></div>
     <div id="loading-text">正在加载 OpenCV.js...</div>
+    <div id="progress-bar-container">
+      <div id="progress-bar"></div>
+    </div>
+    <div id="progress-text"></div>
   </div>
 
   <!-- 隐藏的 video 元素 -->
@@ -304,6 +353,15 @@
       </div>
     </div>
     <div class="setting-row">
+      <label>球的方向</label>
+      <div class="dir-buttons">
+        <button class="dir-btn active" data-dir="top-down" title="从上往下">↓</button>
+        <button class="dir-btn" data-dir="bottom-up" title="从下往上">↑</button>
+        <button class="dir-btn" data-dir="left-right" title="从左往右">→</button>
+        <button class="dir-btn" data-dir="right-left" title="从右往左">←</button>
+      </div>
+    </div>
+    <div class="setting-row">
       <label>计数线位置</label>
       <input type="range" id="countline" min="20" max="90" value="70">
       <span class="value" id="countline-val">70%</span>
@@ -325,7 +383,6 @@
   <!-- 脚本加载 -->
   <script src="detector.js"></script>
   <script src="tracker.js"></script>
-  <script async src="https://docs.opencv.org/4.9.0/opencv.js" onload="onOpenCvReady();" id="opencv-script"></script>
   <script src="app.js"></script>
 </body>
 </html>
