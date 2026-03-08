@@ -37,6 +37,8 @@ const sensitivityVal = document.getElementById('sensitivity-val');
 const countlineSlider = document.getElementById('countline');
 const countlineVal = document.getElementById('countline-val');
 const debugToggle = document.getElementById('debug-toggle');
+const landscapeToggle = document.getElementById('landscape-toggle');
+const wideAngleToggle = document.getElementById('wide-angle-toggle');
 const sizeButtons = document.querySelectorAll('.size-btn');
 const dirButtons = document.querySelectorAll('.dir-btn');
 
@@ -125,22 +127,64 @@ function onOpenCvReady() {
 
 /**
  * 启动摄像头
+ * @param {boolean} wideAngle - 是否请求广角镜头
  */
-async function startCamera() {
+async function startCamera(wideAngle) {
+  // 停止已有的摄像头流
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+    cameraReady = false;
+  }
+
+  const constraints = {
+    video: {
+      facingMode: 'environment',
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      frameRate: { ideal: 60, min: 30 },
+    },
+    audio: false,
+  };
+
+  if (wideAngle) {
+    // 尝试请求超广角镜头：优先 0.5x zoom，否则请求最宽 FOV
+    constraints.video.zoom = { ideal: 0.5 };
+    constraints.video.width = { ideal: 1280 };
+    constraints.video.height = { ideal: 720 };
+  }
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        frameRate: { ideal: 60, min: 30 },
-      },
-      audio: false,
-    });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      if (wideAngle) {
+        // zoom 约束可能不被支持，回退去掉 zoom
+        console.warn('广角约束不支持，尝试回退:', e.message);
+        delete constraints.video.zoom;
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } else {
+        throw e;
+      }
+    }
 
     video.srcObject = stream;
     await video.play();
     cameraReady = true;
+
+    // 尝试通过 track 设置 zoom（某些设备支持）
+    if (wideAngle) {
+      try {
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities();
+        if (caps.zoom && caps.zoom.min < 1) {
+          await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] });
+        }
+      } catch (e) {
+        console.warn('无法设置 zoom:', e.message);
+      }
+    }
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -367,10 +411,31 @@ dirButtons.forEach(btn => {
   });
 });
 
+// 横屏模式
+landscapeToggle.addEventListener('change', () => {
+  if (landscapeToggle.checked) {
+    // 尝试锁定横屏
+    if (screen.orientation && screen.orientation.lock) {
+      screen.orientation.lock('landscape').catch(e => {
+        console.warn('无法锁定横屏:', e.message);
+      });
+    }
+  } else {
+    if (screen.orientation && screen.orientation.unlock) {
+      screen.orientation.unlock();
+    }
+  }
+});
+
+// 广角镜头模式
+wideAngleToggle.addEventListener('change', () => {
+  startCamera(wideAngleToggle.checked);
+});
+
 // 页面加载完成后启动
 document.addEventListener('DOMContentLoaded', () => {
   loadOpenCv();
-  startCamera();
+  startCamera(false);
 });
 
 // 页面可见性变化
